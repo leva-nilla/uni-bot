@@ -1,15 +1,5 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
-const http = require('http');
-
-// ─── ヘルスチェック用HTTPサーバー（Koyeb対応） ────────────
-const PORT = process.env.PORT || 8000;
-http.createServer((_req, res) => {
-  res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ status: 'ok', uptime: process.uptime() }));
-}).listen(PORT, () => {
-  console.log(`🏥 ヘルスチェックサーバー起動: ポート ${PORT}`);
-});
 
 // ─── 設定 ───────────────────────────────────────────────
 const UNI_PATTERNS = [
