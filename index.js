@@ -106,4 +106,15 @@ if (!token || token === 'YOUR_BOT_TOKEN_HERE') {
   process.exit(1);
 }
 
+// Koyeb等のヘルスチェック用HTTPサーバー
+const http = require('http');
+const PORT = process.env.PORT || 8000;
+
+http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('Bot is running!\n');
+}).listen(PORT, () => {
+  console.log(`🌐 Health check server listening on port ${PORT}`);
+});
+
 client.login(token);

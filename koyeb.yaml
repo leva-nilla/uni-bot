@@ -1,0 +1,20 @@
+name: uni-bot
+services:
+  - name: uni-bot-service
+    type: web
+    image: docker.io/library/node:20-alpine
+    ports:
+      - port: 8000
+        protocol: http
+    env:
+      - key: DISCORD_TOKEN
+        type: secret
+        value: DISCORD_TOKEN
+      - key: PORT
+        value: "8000"
+    regions:
+      - fra
+    instance_types:
+      - nano
+    # Build configuration (if not using pre-built image)
+    # Koyeb will use the Dockerfile by default if it exists.
