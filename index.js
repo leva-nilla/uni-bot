@@ -1,6 +1,19 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
 
+// ─── エラーハンドリング ─────────────────────────────────────
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception thrown:', err);
+  // クリティカルなエラーの場合はプロセスを終了させて再起動を促す
+  if (err.name === 'Error' && err.message.includes('token')) {
+    process.exit(1);
+  }
+});
+
 // ─── 設定 ───────────────────────────────────────────────
 const UNI_PATTERNS = [
   'うに',        // ひらがな
