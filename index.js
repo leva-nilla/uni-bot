@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder, Events } = require('discord.js');
 
 // ─── エラーハンドリング ─────────────────────────────────────
 process.on('unhandledRejection', (reason, promise) => {
@@ -78,7 +78,7 @@ const client = new Client({
   ],
 });
 
-client.once('ready', () => {
+client.once(Events.ClientReady, () => {
   console.log(`✅ ログイン成功: ${client.user.tag}`);
   console.log(`📡 ${client.guilds.cache.size} サーバーに接続中`);
 });
@@ -126,8 +126,24 @@ const PORT = process.env.PORT || 8000;
 http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
   res.end('Bot is running!\n');
-}).listen(PORT, () => {
+}).listen(PORT, '0.0.0.0', () => {
   console.log(`🌐 Health check server listening on port ${PORT}`);
 });
 
-client.login(token);
+console.log('🚀 Bot process starting...');
+client.login(token).catch(err => {
+  console.error('❌ Login failed:', err);
+  process.exit(1);
+});
+
+process.on('SIGINT', () => {
+  console.log('👋 SIGINT received. Shutting down...');
+  client.destroy();
+  process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+  console.log('👋 SIGTERM received. Shutting down...');
+  client.destroy();
+  process.exit(0);
+});

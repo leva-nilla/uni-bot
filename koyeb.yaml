@@ -1,16 +1,13 @@
 name: uni-bot
 services:
   - name: uni-bot-service
-    type: web
+    type: worker
     source:
       git:
         repository: github.com/leva-nilla/uni-bot
         branch: main
         build:
           type: docker
-    ports:
-      - port: 8000
-        protocol: http
     env:
       - key: DISCORD_TOKEN
         type: secret
