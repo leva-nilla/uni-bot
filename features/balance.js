@@ -9,6 +9,14 @@ function shuffle(values, random = Math.random) {
   return result;
 }
 function teamTotal(members) { return members.reduce((sum, person) => sum + person.score, 0); }
+function teamAverage(members) { return members.length ? teamTotal(members) / members.length : null; }
+function balanceDifference(blue, red) {
+  if (!blue.length || !red.length) return 0;
+  // With unequal teams, comparing raw totals would punish the larger team for having an extra player.
+  return blue.length === red.length
+    ? Math.abs(teamTotal(blue) - teamTotal(red))
+    : Math.abs(teamAverage(blue) - teamAverage(red));
+}
 function laneDuplicates(members) {
   const seen = new Set();
   let count = 0;
@@ -19,55 +27,66 @@ function laneDuplicates(members) {
   }
   return count;
 }
-function assertTen(players) {
-  if (!Array.isArray(players) || players.length !== 10 || new Set(players.map(p => p.id)).size !== 10) {
-    throw new Error('10人の異なる参加者が必要です');
+function assertPlayers(players) {
+  if (!Array.isArray(players) || players.length < 1 || players.length > 10 ||
+      new Set(players.map(p => p.id)).size !== players.length ||
+      players.some(p => !p.id || !Number.isFinite(p.score))) {
+    throw new Error('参加者は1〜10人の異なるメンバーが必要です');
   }
 }
 function balanceTeams(players, random = Math.random) {
-  assertTen(players);
+  assertPlayers(players);
+  if (players.length === 1) return { blue: [...players], red: [], diff: 0 };
+  const n = players.length;
   const ranked = [...players].sort((a, b) => b.score - a.score);
-  const exceptionalLeaders = ranked[1].score - ranked[4].score >= 1.5;
+  // For 5+ players, prefer splitting the two standout players where possible.
+  const exceptionalLeaders = n >= 5 && ranked[1].score - ranked[Math.min(4, n - 1)].score >= 1.5;
   const options = [];
-  // Include player 0 only in Blue to avoid inspecting mirrored teams twice (126 combinations).
-  for (let a = 1; a < 10; a++) for (let b = a + 1; b < 10; b++)
-    for (let c = b + 1; c < 10; c++) for (let d = c + 1; d < 10; d++) {
-      const ids = new Set([0, a, b, c, d]);
-      const blue = players.filter((_, i) => ids.has(i));
-      const red = players.filter((_, i) => !ids.has(i));
-      const diff = Math.abs(teamTotal(blue) - teamTotal(red));
-      const leadersTogether = exceptionalLeaders && blue.includes(ranked[0]) === blue.includes(ranked[1]);
-      const duplicates = laneDuplicates(blue) + laneDuplicates(red);
-      // Up to one tier of *team total* difference is acceptable; otherwise penalize heavily.
-      const cost = Math.max(0, diff - 1) * 10 + (leadersTogether ? 0.8 : 0) + duplicates * 0.12 + diff * 0.015;
-      options.push({ blue, red, cost, diff });
-    }
+  // n <= 10, so at most 252 valid equal-size subsets (no expensive solver necessary).
+  for (let mask = 1; mask < (1 << n) - 1; mask++) {
+    let size = 0;
+    for (let bit = mask; bit; bit &= bit - 1) size++;
+    if (Math.abs(size - (n - size)) > 1) continue;
+    const blue = players.filter((_, i) => Boolean(mask & (1 << i)));
+    const red = players.filter((_, i) => !Boolean(mask & (1 << i)));
+    const diff = balanceDifference(blue, red);
+    const leadersTogether = exceptionalLeaders && (blue.includes(ranked[0]) === blue.includes(ranked[1]));
+    const duplicates = laneDuplicates(blue) + laneDuplicates(red);
+    const cost = Math.max(0, diff - 1) * 10 + (leadersTogether ? 0.8 : 0) + duplicates * 0.12 + diff * 0.015;
+    options.push({ blue, red, cost, diff });
+  }
   const best = Math.min(...options.map(p => p.cost));
   const eligible = options.filter(p => p.cost <= best + 0.16);
   return eligible[Math.floor(random() * eligible.length)];
 }
 function randomTeams(players, random = Math.random) {
-  assertTen(players);
+  assertPlayers(players);
   const mixed = shuffle(players, random);
-  return { blue: mixed.slice(0, 5), red: mixed.slice(5), diff: Math.abs(teamTotal(mixed.slice(0, 5)) - teamTotal(mixed.slice(5))) };
+  const blue = mixed.slice(0, Math.ceil(mixed.length / 2));
+  const red = mixed.slice(Math.ceil(mixed.length / 2));
+  return { blue, red, diff: balanceDifference(blue, red) };
 }
+function maxSwapPairs(blue, red) { return Math.min(4, blue.length, red.length); }
 function nearbySwap(blue, red, pairCount, random = Math.random) {
-  if (blue.length !== 5 || red.length !== 5 || !Number.isInteger(pairCount) || pairCount < 1 || pairCount > 4) {
-    throw new Error('交換組数は1〜4組にしてください');
+  if (!Number.isInteger(pairCount) || pairCount < 1 || pairCount > maxSwapPairs(blue, red) ||
+      blue.length + red.length > 10 || blue.length + red.length < 2 ||
+      Math.abs(blue.length - red.length) > 1) {
+    throw new Error(`交換組数は1〜${maxSwapPairs(blue, red)}組の範囲で指定してください`);
   }
-  const currentDiff = Math.abs(teamTotal(blue) - teamTotal(red));
+  const currentDiff = balanceDifference(blue, red);
   const candidates = [];
   const usedRed = new Set();
   const chosen = [];
   function search(startA) {
     if (chosen.length === pairCount) {
-      const blueDelta = chosen.reduce((sum, [i, j]) => sum + red[j].score - blue[i].score, 0);
-      const diff = Math.abs((teamTotal(blue) + blueDelta) - (teamTotal(red) - blueDelta));
+      const nextBlue = [...blue], nextRed = [...red];
+      for (const [i, j] of chosen) [nextBlue[i], nextRed[j]] = [red[j], blue[i]];
+      const diff = balanceDifference(nextBlue, nextRed);
       if (diff <= Math.max(1, currentDiff) + 1e-9) candidates.push({ swaps: [...chosen], diff });
       return;
     }
-    for (let i = startA; i <= 5 - (pairCount - chosen.length); i++) {
-      for (let j = 0; j < 5; j++) {
+    for (let i = startA; i <= blue.length - (pairCount - chosen.length); i++) {
+      for (let j = 0; j < red.length; j++) {
         if (usedRed.has(j) || Math.abs(blue[i].score - red[j].score) > 1 + 1e-9) continue;
         usedRed.add(j); chosen.push([i, j]);
         search(i + 1);
@@ -77,7 +96,6 @@ function nearbySwap(blue, red, pairCount, random = Math.random) {
   }
   search(0);
   if (!candidates.length) return null;
-  // Same-tier pairs preferred, but all swaps that maintain reasonable team balance are valid.
   const picked = candidates[Math.floor(random() * candidates.length)];
   const nextBlue = [...blue], nextRed = [...red];
   const swapped = [];
@@ -87,4 +105,4 @@ function nearbySwap(blue, red, pairCount, random = Math.random) {
   }
   return { blue: nextBlue, red: nextRed, swaps: swapped, diff: picked.diff };
 }
-module.exports = { balanceTeams, randomTeams, nearbySwap, teamTotal };
+module.exports = { balanceTeams, randomTeams, nearbySwap, teamTotal, teamAverage, balanceDifference, maxSwapPairs };

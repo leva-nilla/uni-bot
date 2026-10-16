@@ -39,3 +39,27 @@ Discord Developer Portalで **Message Content Intent** を有効にしてくだ�
 ## 開発と検証
 
 `npm test` でランク認識、チーム分配、再抽選のロジックをテストします。
+
+## LoL カスタムの人数・Bot権限（2026-10）
+
+`/lol setup` で操作パネルを設置、または `/lol team` で現在のVCにいる **1〜10人** を編成します。
+- 1人: BLUE 1 / RED 0（表示検証用）。2〜10人: できるだけ半分ずつ。奇数なら人数差は1。
+- ランク均等・完全ランダム再抽選を利用可能。近いランク同士の交換は **1〜min(4, 両チームの少ない方の人数)組**。1人の場合は交換メニューを表示しません。
+- 奇数人数時のランク差は、合計スコアではなく **平均ランクスコア**で評価します。実際のLoLカスタム対戦のマッチングとして意味があるのは原則10人のときです。
+- 11人以上のVCではエラーを表示します。参加者の選択機能は未実装です。
+- 結果を再抽選するときは、初回に取得したメンバーを維持します。
+
+### Discordの権限
+
+uni-bot 本体には、サーバーへのインストールに `bot` / `applications.commands` スコープを指定します。Botロールは最低限 **View Channel / Send Messages / Embed Links / Read Message History / Add Reactions** を許可してください。
+- LoL編成機能はVCの**状態を読み取るだけ**で、VCへBot自身を入れる必要はありません。**Connect / Speak / Move Members は不要**。
+- Discord Developer Portal → Bot の **Message Content Intent** は、既存の「うに」メッセージ検知に必要です。`GuildVoiceStates` は標準のGateway Intentで、コード側ですでに有効化済みです。
+- `/unioff` と `/union` を押す**ユーザー**には「サーバー管理（Manage Server）」が必要です。Bot自身に `Manage Guild` 権限を付与する必要はありません。
+
+独立テストツール (`uni-bot-vc-test-harness`) のBot #1〜9には、**View Channel / Connect** を付けます。Bot #1でロール付与を自動化する場合だけ、追加で **Manage Roles** を付けてBot #1のロールを対象ロールより上に移動します。自己ミュート参加のため Speak / Administrator は不要です。
+
+専用テストサーバーでテストBotをカウントする場合は、uni-bot側に `LOL_TEST_GUILD_ID` と `LOL_TEST_BOT_IDS` を設定してください。未設定時・通常サーバーではBot参加者を除外します。
+
+### Koyeb
+
+GitHub連携したサービスで `main` ブランチの **Autodeploy** が有効なら、マージ後のコミットから自動デプロイされます。公開リポジトリURLを直接指定したサービスは、自動デプロイが無効な場合があります。Koyebのサービス画面で **Settings → Source → Autodeploy** と **Deployments（稼働バージョン）** を確認してください。
