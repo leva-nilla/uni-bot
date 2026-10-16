@@ -44,7 +44,13 @@ async function voicePlayers(interaction) {
   const voiceStates = [...guild.voiceStates.cache.values()].filter(state => state.channelId === channelId);
   // Do not require the privileged GuildMembers intent: fetch only the members actually in VC.
   const members = await Promise.all(voiceStates.map(state => guild.members.fetch(state.id)));
-  const humans = members.filter(member => !member.user.bot);
+  // Test-only exception: only explicitly listed Bot IDs on one designated test server.
+  // No environment variables => normal behaviour is unchanged.
+  const testGuildId = process.env.LOL_TEST_GUILD_ID || '';
+  const allowTestBots = testGuildId !== '' && guild.id === testGuildId;
+  const testBotIds = allowTestBots ? new Set((process.env.LOL_TEST_BOT_IDS || '')
+    .split(',').map(id => id.trim()).filter(id => /^\d{17,20}$/.test(id))) : new Set();
+  const humans = members.filter(member => !member.user.bot || testBotIds.has(member.id));
   if (humans.length !== 10) throw new Error(`現在のVCには ${humans.length} 人います。10人集めてから実行してください。`);
   return { players: humans.map(readMemberRoles), channelId, channelName: caller.voice.channel?.name || 'VC' };
 }
