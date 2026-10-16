@@ -5,7 +5,8 @@ const { setEnabled, isEnabled } = require('./uni-settings');
 const definitions = [
   new SlashCommandBuilder().setName('lol').setDescription('LoLカスタムのチーム分け')
     .addSubcommand(cmd => cmd.setName('setup').setDescription('カスタムチーム分けパネルを設置'))
-    .addSubcommand(cmd => cmd.setName('team').setDescription('参加中VCの10人をランク均等で編成'))
+    .addSubcommand(cmd => cmd.setName('team').setDescription('参加中VCの1〜10人をランク均等で編成'))
+    .addSubcommand(cmd => cmd.setName('diagnose').setDescription('参加中VCのランク・レーン認識結果とロール名を確認'))
     .setDMPermission(false),
   new SlashCommandBuilder().setName('unioff').setDescription('このサーバーのうに検知を停止')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild).setDMPermission(false),
@@ -25,6 +26,7 @@ async function handle(interaction) {
       if (interaction.commandName === 'lol') {
         if (interaction.options.getSubcommand() === 'setup') return interaction.reply(lol.panel());
         if (interaction.options.getSubcommand() === 'team') return lol.start(interaction);
+        if (interaction.options.getSubcommand() === 'diagnose') return lol.diagnose(interaction);
       }
       if (interaction.commandName === 'unioff' || interaction.commandName === 'union') {
         if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {

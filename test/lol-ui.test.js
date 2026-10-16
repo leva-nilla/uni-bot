@@ -24,6 +24,7 @@ const fakeDiscord = {
   ButtonStyle: { Primary: 1, Secondary: 2 },
   EmbedBuilder: Fluent,
   StringSelectMenuBuilder: Fluent,
+  MessageFlags: { Ephemeral: 64 },
 };
 const originalLoad = Module._load;
 Module._load = function(request, parent, isMain) {
@@ -99,4 +100,23 @@ test('only explicitly allowlisted test bots are considered', async () => {
     if (prevGuild === undefined) delete process.env.LOL_TEST_GUILD_ID; else process.env.LOL_TEST_GUILD_ID = prevGuild;
     if (prevIds === undefined) delete process.env.LOL_TEST_BOT_IDS; else process.env.LOL_TEST_BOT_IDS = prevIds;
   }
+});
+
+test('role diagnosis shows recognized ranks, lowercase lane and raw role names', async () => {
+  const interaction = mockInteraction(3);
+  const role = interaction.guild.members.fetch;
+  interaction.guild.members.fetch = async id => {
+    const member = await role(id);
+    if (member.id === createId(0)) member.roles.cache = new Map([
+      ['r', { id: 'r', name: 'グランドマスター+α' }],
+      ['l', { id: 'l', name: 'top' }],
+    ]);
+    return member;
+  };
+  interaction.deferReply = async opts => { interaction.deferOptions = opts; };
+  await lol.diagnose(interaction);
+  assert.match(interaction.replied.content, /Grandmaster\(8\)/);
+  assert.match(interaction.replied.content, /レーン=TOP/);
+  assert.match(interaction.replied.content, /グランドマスター\+α/);
+  assert.ok(interaction.replied.content.length < 2000);
 });

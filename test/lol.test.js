@@ -121,3 +121,57 @@ test('maximum available swaps scales with team sizes; no duplicate exchange', ()
     assert.throws(() => nearbySwap(setup.blue, setup.red, max + 1));
   }
 });
+
+const { readMemberRoles } = require('../features/ranks');
+test('high rank role variants and +alpha suffix keep the correct tier', () => {
+  const cases = [
+    ['マスター', 'MASTER', 7],
+    ['master', 'MASTER', 7],
+    ['MASTER +α', 'MASTER', 7],
+    ['ますたー＋α', 'MASTER', 7],
+    ['Grand Master+α', 'GRANDMASTER', 8],
+    ['グランドマスター＋α', 'GRANDMASTER', 8],
+    ['ぐらんどますたー+α', 'GRANDMASTER', 8],
+    ['グラマス以上', 'GRANDMASTER', 8],
+    ['Challenger', 'CHALLENGER', 9],
+    ['チャレンジャー', 'CHALLENGER', 9],
+    ['ちゃれんじゃー', 'CHALLENGER', 9],
+    ['Master / Grandmaster+α', 'GRANDMASTER', 8],
+    ['マスター、グランドマスター+α、チャレンジャー', 'CHALLENGER', 9],
+    ['ランク | master | lol', 'MASTER', 7],
+  ];
+  for (const [role, tier, score] of cases) {
+    assert.equal(rankFromName(role)?.id, tier, role);
+    assert.equal(rankFromName(role)?.score, score, role);
+  }
+});
+
+test('all lowercase and decorated lane role names are recognized', () => {
+  const cases = [
+    ['top', 'TOP'], ['Top', 'TOP'], ['TOP', 'TOP'], ['topレーン', 'TOP'],
+    ['メイン：top', 'TOP'], ['LoL | top | メイン', 'TOP'],
+    ['jg', 'JG'], ['jungle', 'JG'], ['mid', 'MID'],
+    ['adc', 'ADC'], ['bot', 'ADC'], ['sup', 'SUP'], ['support', 'SUP'],
+    ['サポート', 'SUP'], ['メイン / top', 'TOP'],
+  ];
+  for (const [role, lane] of cases) assert.equal(laneFromName(role), lane, role);
+  for (const role of ['topology', 'supporter', 'masterpiece', 'midnight']) {
+    assert.equal(laneFromName(role), null, role);
+  }
+  assert.equal(rankFromName('masterpiece'), null);
+});
+
+test('actual Discord member roles are read with lowercase lane + grouped high-rank role', () => {
+  const member = {
+    id: '123', displayName: 'Test',
+    roles: { cache: new Map([
+      ['rank', { name: 'グランドマスター+α' }],
+      ['lane', { name: 'top' }],
+    ]) },
+  };
+  const parsed = readMemberRoles(member);
+  assert.equal(parsed.rank, 'Grandmaster');
+  assert.equal(parsed.score, 8);
+  assert.equal(parsed.lane, 'TOP');
+  assert.deepEqual(parsed.warnings, []);
+});
