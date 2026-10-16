@@ -1,150 +1,62 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits, EmbedBuilder, Events } = require('discord.js');
+const { register, handle, isEnabled } = require('./features/commands');
 
-// ─── エラーハンドリング ─────────────────────────────────────
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+process.on('unhandledRejection', reason => console.error('Unhandled Rejection:', reason));
+process.on('uncaughtException', err => {
+  console.error('Uncaught Exception:', err);
+  if (err.name === 'Error' && err.message.includes('token')) process.exit(1);
 });
 
-process.on('uncaughtException', (err) => {
-  console.error('Uncaught Exception thrown:', err);
-  // クリティカルなエラーの場合はプロセスを終了させて再起動を促す
-  if (err.name === 'Error' && err.message.includes('token')) {
-    process.exit(1);
-  }
-});
-
-// ─── 設定 ───────────────────────────────────────────────
-const UNI_PATTERNS = [
-  'うに',        // ひらがな
-  'ウニ',        // カタカナ
-  'ｳﾆ',         // 半角カタカナ
-  '雲丹',        // 漢字
-  '海胆',        // 漢字
-  '\\buni\\b',   // 英語（単語境界を使用。universeやunique等を除外）
-];
-
-// 反応メッセージ（ランダムで選ばれる）
-const RESPONSES = [
-  '🍣 うにを検知しました！',
-  '🦀 うに発見！！',
-  '🐡 ここにうにがいます！',
-  '🍣 うにうにうに～！',
-  '🌊 海の幸「うに」を感知！',
-];
-
-// リアクション絵文字
+const UNI_PATTERNS = ['うに', 'ウニ', 'ｳﾆ', '雲丹', '海胆', '\\buni\\b'];
+const RESPONSES = ['🍣 うにを検知しました！', '🦀 うに発見！！', '🐡 ここにうにがいます！', '🍣 うにうにうに～！', '🌊 海の幸「うに」を感知！'];
 const REACTION_EMOJI = '🍣';
-
-// ─── ユーティリティ ──────────────────────────────────────
-/**
- * メッセージ内の「うに」「ウニ」を検出し、該当箇所をハイライトした文字列を返す
- * @param {string} text - 検査するテキスト
- * @returns {{ found: boolean, highlighted: string, count: number }}
- */
-function detectUni(text) {
-  // 大文字・小文字やカタカナ・ひらがな混在に対応するため
-  // 全パターンを正規表現でまとめる
+function detectUni(content) {
   const pattern = new RegExp(`(${UNI_PATTERNS.join('|')})`, 'gi');
-  const matches = text.match(pattern);
-
-  if (!matches) {
-    return { found: false, highlighted: text, count: 0 };
-  }
-
-  // 該当箇所を【】で囲んでハイライト
-  const highlighted = text.replace(pattern, '**【$1】**');
-
-  return {
-    found: true,
-    highlighted,
-    count: matches.length,
-  };
+  const matches = content.match(pattern);
+  if (!matches) return { found: false, highlighted: content, count: 0 };
+  return { found: true, highlighted: content.replace(pattern, '**【$1】**'), count: matches.length };
 }
-
-/**
- * ランダムに応答メッセージを選ぶ
- */
-function getRandomResponse() {
-  return RESPONSES[Math.floor(Math.random() * RESPONSES.length)];
-}
-
-// ─── Bot本体 ─────────────────────────────────────────────
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
-  ],
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildVoiceStates],
 });
-
 client.once(Events.ClientReady, () => {
   console.log(`✅ ログイン成功: ${client.user.tag}`);
   console.log(`📡 ${client.guilds.cache.size} サーバーに接続中`);
+  register(client).catch(err => console.error('コマンド登録失敗:', err));
 });
-
-client.on('messageCreate', async (message) => {
-  // Bot自身のメッセージは無視
-  if (message.author.bot) return;
-
+client.on(Events.InteractionCreate, handle);
+client.on(Events.MessageCreate, async (message) => {
+  if (!message.guild || message.author.bot || !isEnabled(message.guildId)) return;
   const result = detectUni(message.content);
-
   if (!result.found) return;
-
   try {
-    // リアクションを付ける
     await message.react(REACTION_EMOJI);
-
-    // Embedで返信
-    const embed = new EmbedBuilder()
-      .setColor(0xFFA500) // うにっぽいオレンジ色
-      .setTitle(getRandomResponse())
+    const embed = new EmbedBuilder().setColor(0xFFA500)
+      .setTitle(RESPONSES[Math.floor(Math.random() * RESPONSES.length)])
       .setDescription(result.highlighted)
-      .setFooter({
-        text: `🍣 ${result.count}個のうにを検出`,
-      })
-      .setTimestamp();
-
+      .setFooter({ text: `🍣 ${result.count}個のうにを検出` }).setTimestamp();
     await message.reply({ embeds: [embed] });
-  } catch (err) {
-    console.error('メッセージ処理エラー:', err);
-  }
+  } catch (error) { console.error('メッセージ処理エラー:', error); }
 });
-
-// ─── 起動 ─────────────────────────────────────────────────
 const token = process.env.DISCORD_TOKEN;
-
 if (!token || token === 'YOUR_BOT_TOKEN_HERE') {
   console.error('❌ DISCORD_TOKEN が設定されていません。.env ファイルを確認してください。');
   process.exit(1);
 }
-
-// Koyeb等のヘルスチェック用HTTPサーバー
-const http = require('http');
+const http = require('node:http');
 const PORT = process.env.PORT || 8000;
-
 http.createServer((req, res) => {
   console.log(`📩 Received ${req.method} request for ${req.url} from ${req.socket.remoteAddress}`);
   res.writeHead(200, { 'Content-Type': 'text/plain' });
   res.end('Bot is running!\n');
-}).listen(PORT, () => {
-  console.log(`🌐 Health check server listening on port ${PORT}`);
-});
-
+}).listen(PORT, () => console.log(`🌐 Health check server listening on port ${PORT}`));
 console.log('🚀 Bot process starting...');
-client.login(token).catch(err => {
-  console.error('❌ Login failed:', err);
-  process.exit(1);
-});
-
-process.on('SIGINT', () => {
-  console.log('👋 SIGINT received. Shutting down...');
+client.login(token).catch(err => { console.error('❌ Login failed:', err); process.exit(1); });
+function shutdown(signal) {
+  console.log(`👋 ${signal} received. Shutting down...`);
   client.destroy();
   process.exit(0);
-});
-
-process.on('SIGTERM', () => {
-  console.log('👋 SIGTERM received. Shutting down...');
-  client.destroy();
-  process.exit(0);
-});
+}
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
