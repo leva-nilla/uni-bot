@@ -4,12 +4,12 @@ const {
   ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, StringSelectMenuBuilder,
 } = require('discord.js');
 const { readMemberRoles } = require('./ranks');
-const { balanceTeams, randomTeams, nearbySwap, teamTotal } = require('./balance');
+const { balanceTeams, randomTeams, nearbySwap, teamTotal, teamAverage, maxSwapPairs } = require('./balance');
 
 const sessions = new Map();
 function panel() {
   const embed = new EmbedBuilder().setTitle('LoL カスタムチーム分け')
-    .setDescription('VCに10人集まったら、参加者の誰かが「ランク均等」を押すだけ。\n現在入っているVCから参加者を自動取得します。')
+    .setDescription('VCの参加者1〜10人を自動取得してチーム分けします。\n人数が奇数の場合は人数差1で編成します。')
     .setColor(0x4a88bf);
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('lol:balance').setLabel('ランク均等でチーム分け').setStyle(ButtonStyle.Primary),
@@ -17,24 +17,43 @@ function panel() {
   return { embeds: [embed], components: [row], allowedMentions: { parse: [] } };
 }
 function result(session, title) {
-  const print = (members) => members.map(p => `${p.lane || '???'} │ ${p.name} │ ${p.rank}`).join('\n');
-  const diff = Math.abs(teamTotal(session.blue) - teamTotal(session.red));
+  const print = members => members.length
+    ? members.map(p => `${p.lane || '???'} │ ${p.name} │ ${p.rank}`).join('\n')
+    : '（参加者なし）';
+  const blue = session.blue;
+  const red = session.red;
   const warnings = session.players.flatMap(p => p.warnings).slice(0, 8);
+  let balanceText;
+  if (!blue.length || !red.length) {
+    balanceText = '参加者が1人のため、チーム間の比較はできません。';
+  } else if (blue.length === red.length) {
+    balanceText = `合計スコア差 ${Math.abs(teamTotal(blue) - teamTotal(red)).toFixed(2)}（1ティア差までを初期編成の目安にします）`;
+  } else {
+    balanceText = `平均ランクスコア差 ${Math.abs(teamAverage(blue) - teamAverage(red)).toFixed(2)}（人数が異なるため平均値で比較）`;
+  }
   const embed = new EmbedBuilder().setTitle(title).setColor(0x3585c5)
     .addFields(
-      { name: `BLUE（合計 ${teamTotal(session.blue).toFixed(2)}）`, value: print(session.blue) },
-      { name: `RED（合計 ${teamTotal(session.red).toFixed(2)}）`, value: print(session.red) },
-      { name: '戦力スコア差', value: `${diff.toFixed(2)} / 1ティア差までを初期編成の許容目安にします` },
+      { name: `BLUE（${blue.length}人 / 合計 ${teamTotal(blue).toFixed(2)}）`, value: print(blue) },
+      { name: `RED（${red.length}人 / 合計 ${teamTotal(red).toFixed(2)}）`, value: print(red) },
+      { name: '戦力バランス', value: balanceText },
     )
-    .setFooter({ text: `対象VC: ${session.channelName} ｜ 再抽選は元の10人を固定` });
+    .setFooter({ text: `対象VC: ${session.channelName} ｜ 参加者${session.players.length}人固定で再抽選` });
   if (warnings.length) embed.addFields({ name: 'ロール設定の注意', value: warnings.join('\n').slice(0, 1024) });
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`lol:random:${session.id}`).setLabel('完全ランダム').setStyle(ButtonStyle.Secondary),
   );
-  const select = new StringSelectMenuBuilder().setCustomId(`lol:swap:${session.id}`)
-    .setPlaceholder('近いランク同士を何組交換する？')
-    .addOptions([1, 2, 3, 4].map(n => ({ label: `${n}組（${n * 2}人）交換`, value: String(n) })));
-  return { embeds: [embed], components: [row, new ActionRowBuilder().addComponents(select)], allowedMentions: { parse: [] } };
+  const components = [row];
+  const maxPairs = maxSwapPairs(blue, red);
+  if (maxPairs > 0) {
+    const select = new StringSelectMenuBuilder().setCustomId(`lol:swap:${session.id}`)
+      .setPlaceholder('近いランク同士を何組交換する？')
+      .addOptions(Array.from({ length: maxPairs }, (_, i) => {
+        const n = i + 1;
+        return { label: `${n}組（${n * 2}人）交換`, value: String(n) };
+      }));
+    components.push(new ActionRowBuilder().addComponents(select));
+  }
+  return { embeds: [embed], components, allowedMentions: { parse: [] } };
 }
 async function voicePlayers(interaction) {
   const guild = interaction.guild;
@@ -44,14 +63,14 @@ async function voicePlayers(interaction) {
   const voiceStates = [...guild.voiceStates.cache.values()].filter(state => state.channelId === channelId);
   // Do not require the privileged GuildMembers intent: fetch only the members actually in VC.
   const members = await Promise.all(voiceStates.map(state => guild.members.fetch(state.id)));
-  // Test-only exception: only explicitly listed Bot IDs on one designated test server.
-  // No environment variables => normal behaviour is unchanged.
+  // Test-only exception: explicit bot IDs on one designated test server.
+  // A normal server always ignores bots.
   const testGuildId = process.env.LOL_TEST_GUILD_ID || '';
   const allowTestBots = testGuildId !== '' && guild.id === testGuildId;
   const testBotIds = allowTestBots ? new Set((process.env.LOL_TEST_BOT_IDS || '')
     .split(',').map(id => id.trim()).filter(id => /^\d{17,20}$/.test(id))) : new Set();
   const humans = members.filter(member => !member.user.bot || testBotIds.has(member.id));
-  if (humans.length !== 10) throw new Error(`現在のVCには ${humans.length} 人います。10人集めてから実行してください。`);
+  if (humans.length < 1 || humans.length > 10) throw new Error(`現在のVCには ${humans.length} 人います。参加者は1〜10人にしてください。`);
   return { players: humans.map(readMemberRoles), channelId, channelName: caller.voice.channel?.name || 'VC' };
 }
 function newSession({ players, channelId, channelName }) {
@@ -85,6 +104,10 @@ async function reroll(interaction, kind, id) {
   if (kind === 'random') changed = randomTeams(session.players);
   else {
     const count = Number(interaction.values?.[0]);
+    const maxPairs = maxSwapPairs(session.blue, session.red);
+    if (!Number.isInteger(count) || count < 1 || count > maxPairs) {
+      return interaction.reply({ content: `現在の人数では1〜${maxPairs}組のみ交換できます。`, ephemeral: true });
+    }
     changed = nearbySwap(session.blue, session.red, count);
     if (!changed) return interaction.reply({ content: `条件に合う ${count} 組の交換ができません。組数を減らしてください。`, ephemeral: true });
   }
