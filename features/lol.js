@@ -1,7 +1,7 @@
 'use strict';
 const crypto = require('node:crypto');
 const {
-  ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, StringSelectMenuBuilder,
+  ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, StringSelectMenuBuilder, MessageFlags,
 } = require('discord.js');
 const { readMemberRoles } = require('./ranks');
 const { balanceTeams, randomTeams, nearbySwap, teamTotal, teamAverage, maxSwapPairs } = require('./balance');
@@ -55,7 +55,7 @@ function result(session, title) {
   }
   return { embeds: [embed], components, allowedMentions: { parse: [] } };
 }
-async function voicePlayers(interaction) {
+async function voiceMembers(interaction) {
   const guild = interaction.guild;
   const caller = await guild.members.fetch(interaction.user.id);
   const channelId = caller.voice.channelId;
@@ -70,9 +70,37 @@ async function voicePlayers(interaction) {
   const testBotIds = allowTestBots ? new Set((process.env.LOL_TEST_BOT_IDS || '')
     .split(',').map(id => id.trim()).filter(id => /^\d{17,20}$/.test(id))) : new Set();
   const humans = members.filter(member => !member.user.bot || testBotIds.has(member.id));
-  if (humans.length < 1 || humans.length > 10) throw new Error(`現在のVCには ${humans.length} 人います。参加者は1〜10人にしてください。`);
-  return { players: humans.map(readMemberRoles), channelId, channelName: caller.voice.channel?.name || 'VC' };
+  return { members: humans, channelId, channelName: caller.voice.channel?.name || 'VC' };
 }
+async function voicePlayers(interaction) {
+  const collected = await voiceMembers(interaction);
+  if (collected.members.length < 1 || collected.members.length > 10) {
+    throw new Error(`現在のVCには ${collected.members.length} 人います。参加者は1〜10人にしてください。`);
+  }
+  return { players: collected.members.map(readMemberRoles), channelId: collected.channelId, channelName: collected.channelName };
+}
+
+async function diagnose(interaction) {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  try {
+    const { members, channelName } = await voiceMembers(interaction);
+    const lines = members.slice(0, 10).map(member => {
+      const parsed = readMemberRoles(member);
+      const raw = [...member.roles.cache.values()]
+        .filter(role => role.id !== interaction.guildId)
+        .map(role => role.name.replace(/[\r\n`]/g, ' ').slice(0, 42));
+      return `${member.displayName.replace(/[\r\n`]/g, ' ').slice(0, 40)}: ` +
+        `ランク=${parsed.rank}(${parsed.score}) / レーン=${parsed.lane || '未認識'}\n` +
+        `  ロール: ${raw.slice(0, 6).join(' / ') || 'なし'}`;
+    });
+    if (members.length > 10) lines.push(`ほか${members.length - 10}人は省略`);
+    const content = `【${channelName}】ロール診断（${members.length}人）\n` + lines.join('\n');
+    await interaction.editReply({ content: content.slice(0, 1900), allowedMentions: { parse: [] } });
+  } catch (error) {
+    await interaction.editReply({ content: error.message });
+  }
+}
+
 function newSession({ players, channelId, channelName }) {
   const balanced = balanceTeams(players);
   const session = { id: crypto.randomUUID().slice(0, 12), guildId: null, channelId, channelName, players, blue: balanced.blue, red: balanced.red };
@@ -115,4 +143,4 @@ async function reroll(interaction, kind, id) {
   session.red = changed.red;
   await interaction.update(result(session, kind === 'random' ? 'LoL チーム再抽選（完全ランダム）' : `LoL チーム再抽選（近接ランク ${changed.swaps.length} 組交換）`));
 }
-module.exports = { panel, start, reroll };
+module.exports = { panel, start, reroll, diagnose };

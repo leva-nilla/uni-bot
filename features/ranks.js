@@ -1,6 +1,7 @@
 'use strict';
 
-// Tier intervals are a custom-game heuristic, not Riot MMR.
+// These are heuristic custom-game points, not Riot MMR. A trailing + / +α
+// indicates "and above" in a Discord role name; it does not add extra points.
 const TIERS = [
   { id: 'IRON', label: 'Iron', aliases: ['iron', 'アイアン', 'あいあん'] },
   { id: 'BRONZE', label: 'Bronze', aliases: ['bronze', 'ブロンズ', 'ぶろんず'] },
@@ -20,28 +21,46 @@ const LANES = [
   { id: 'ADC', aliases: ['adc', 'bot', 'bottom', 'ボット', 'ぼっと', 'マークスマン', 'まーくすまん'] },
   { id: 'SUP', aliases: ['sup', 'support', 'サポート', 'さぽーと', 'サポ', 'さぽ'] },
 ];
+const FOLD_SEPARATOR = /[\s_\-‐‑–—・:：()（）\[\]【】]/g;
+const TOKEN_SEPARATOR = /[\s_,，、;；/／|｜・:：()（）\[\]【】{}<>〈〉「」『』+＋]+/u;
 function normalize(text) {
-  return String(text).normalize('NFKC').toLowerCase().replace(/[\s_\-‐‑–—・:：()\[\]【】]/g, '');
+  return String(text).normalize('NFKC').toLowerCase().replace(FOLD_SEPARATOR, '');
 }
-const RANK_ALIASES = TIERS.flatMap((tier, index) => tier.aliases.map(alias => ({
-  tier, index, alias: normalize(alias),
-}))).sort((a, b) => b.alias.length - a.alias.length);
-const LANE_ALIASES = LANES.flatMap(lane => lane.aliases.map(alias => ({
-  id: lane.id, alias: normalize(alias),
-}))).sort((a, b) => b.alias.length - a.alias.length);
+function matchInRole(name, alias) {
+  const original = String(name).normalize('NFKC').toLowerCase();
+  const compact = normalize(original);
+  const needle = normalize(alias);
+  if (!needle) return false;
+  // Recognize aliases as standalone tokens even inside decorated role names:
+  // "メイン / top / LoL", "ランク：Master +α", etc.
+  const tokens = original.split(TOKEN_SEPARATOR).filter(Boolean);
+  if (tokens.includes(needle)) return true;
+  let at = compact.indexOf(needle);
+  while (at !== -1) {
+    const before = compact[at - 1] || '';
+    const after = compact[at + needle.length] || '';
+    const latin = /^[a-z]+$/.test(needle);
+    // Don't match "top" in "topology" or "master" in "masterpiece".
+    if (!latin || (!/[a-z]/.test(before) && !/[a-z]/.test(after))) return true;
+    at = compact.indexOf(needle, at + 1);
+  }
+  return false;
+}
+const RANK_ALIASES = TIERS.flatMap((tier, index) => tier.aliases.map(alias => ({ tier, index, alias })));
 
 function rankFromName(name) {
-  const value = normalize(name);
-  const match = RANK_ALIASES.find(entry => value.includes(entry.alias));
-  if (!match) return null;
+  // If one role deliberately contains multiple tiers (e.g. "Master / Grandmaster+α"),
+  // use the highest one; don't confuse "Master" inside "Grandmaster".
+  const matches = RANK_ALIASES.filter(entry => matchInRole(name, entry.alias));
+  if (!matches.length) return null;
+  const match = matches.reduce((best, entry) => !best || entry.index > best.index ? entry : best, null);
   let division = null;
   if (match.index < 7) {
-    const tail = value.slice(value.indexOf(match.alias) + match.alias.length);
-    const token = tail.match(/^(iv|iii|ii|i|[1-4])(?=$|[^a-z0-9])/i)
-      || tail.match(/^(iv|iii|ii|i|[1-4])$/i);
-    if (token) {
-      division = { '4': 4, iv: 4, '3': 3, iii: 3, '2': 2, ii: 2, '1': 1, i: 1 }[token[1]];
-    }
+    const value = normalize(name);
+    const alias = normalize(match.alias);
+    const tail = value.slice(value.indexOf(alias) + alias.length);
+    const token = tail.match(/^(iv|iii|ii|i|[1-4])(?=$|[^a-z0-9])/i);
+    if (token) division = { '4': 4, iv: 4, '3': 3, iii: 3, '2': 2, ii: 2, '1': 1, i: 1 }[token[1]];
   }
   const offset = division === null ? 0 : (4 - division) * 0.25;
   return {
@@ -52,14 +71,23 @@ function rankFromName(name) {
   };
 }
 function laneFromName(name) {
-  const value = normalize(name);
-  return LANE_ALIASES.find(entry => value === entry.alias || value.endsWith(entry.alias) || value.startsWith(entry.alias))?.id || null;
+  // Japanese suffixes like "topレーン" and English aliases such as "top" / "jg"
+  // are both supported, including mixed-case and decorated role names.
+  const compact = normalize(name);
+  for (const lane of LANES) {
+    for (const alias of lane.aliases) {
+      const needle = normalize(alias);
+      if (matchInRole(name, alias) ||
+          compact === `main${needle}` || compact === `メイン${needle}` ||
+          compact === `${needle}レーン` || compact === `${needle}ロール`) return lane.id;
+    }
+  }
+  return null;
 }
 function readMemberRoles(member) {
   const roles = [...member.roles.cache.values()].map(role => role.name);
   const ranks = roles.map(rankFromName).filter(Boolean);
   const lanes = [...new Set(roles.map(laneFromName).filter(Boolean))];
-  // Multi-ranked members (e.g., Solo/Flex) require server-level cleanup; avoid silently treating both as one.
   const rank = ranks.sort((a, b) => b.score - a.score)[0] || null;
   const warnings = [];
   if (!rank) warnings.push(`${member.displayName}: ランク未設定（仮にGold=3点）`);
